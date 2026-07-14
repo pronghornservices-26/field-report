@@ -2,6 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script>
+// Auto-redirect to hosted version if opened as local file
+(function(){
+  if (window.location.protocol === 'file:') {
+    window.location.replace('https://pronghornservices-26.github.io/field-report/');
+  }
+})();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -330,7 +338,7 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 // ── BAKED-IN PROJECT DATA ─────────────────────────────────────────────────────
 // Updated automatically when exported from job costing tool
 // Last updated: from Pronghorn_job_costing_v17
-const BAKED_PROJECTS = [{"key":"Perkinsville 44 (2026-01)","name":"Perkinsville 44","num":"2026-01","phases":["Mob/ Precon","Dust Control","Sewer","S-Test","Water","W-Test","Storm"],"employees":["Kyle Holme","Cody Stegall","Steven Pressley","Gustavo Rodriguez","Justin Sims","Matt Szaflarski","Tanner Jackson"],"laborClasses":["Excavator Operator","Foreman","Superintendent","Pipe Layer"],"equipment":["Excavator 320D","Excavator 330CL","950G Loader","Dozer","Skid Steer 226","Backhoe","Roller","2K Water Truck","Masey 451 Tractor","Dynapac Sheepsfoot","CAT 140H","CAT 304 Mini"]},{"key":"Tapadero (2026-02)","name":"Tapadero","num":"2026-02","phases":["Relocate","APS"],"employees":["Daniel Rozeboom","Jared Standridge","Ezekiel Brooks","Gustavo Rodriguez"],"laborClasses":["Foreman","Laborer","Pipe Layer"],"equipment":["Cat 304 mini","Skid Steer 226","4K Water Truck"]}];
+const BAKED_PROJECTS = [{"key":"Perkinsville 44 (2026-01)","name":"Perkinsville 44","num":"2026-01","phases":["Mob/ Precon","Dust Control","Sewer","S-Test","Water","W-Test","Storm"],"employees":["Kyle Holme","Cody Stegall","Steven Pressley","Gustavo Rodriguez","Justin Sims","Matt Szaflarski","Harold Clifton (JR)","Jason Laibl"],"laborClasses":["Excavator Operator","Foreman","Superintendent","Pipe Layer","Laborer","Water Truck Operator"],"equipment":["Excavator 320D","Excavator 330CL","950G Loader","Dozer","Skid Steer 226","Backhoe","Roller","2K Water Truck","Masey 451 Tractor","Dynapac Sheepsfoot","CAT 140H","CAT 304 Mini"]},{"key":"Tapadero (2026-02)","name":"Tapadero","num":"2026-02","phases":["Relocate","APS"],"employees":["Daniel Rozeboom","Jared Standridge","Ezekiel Brooks","Gustavo Rodriguez"],"laborClasses":["Foreman","Laborer","Pipe Layer","Excavator Operator","Superintendent"],"equipment":["Cat 304 mini","Skid Steer 226","4K Water Truck"]}];
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let wxSel = [], crewN = 0, eqN = 0, matN = 0, visN = 0;
@@ -401,22 +409,42 @@ function onProjectChange() {
   const val = document.getElementById('project').value;
   if (!val || val === '__other__') { curProject = null; return; }
 
-  // Try live localStorage data first (same-device sync)
   let found = null;
+
+  // 1. Try pronghorn_projects (written by job costing tool - has live employee list)
   try {
-    const fd = localStorage.getItem('pronghorn_field_data');
-    if (fd) {
-      const d = JSON.parse(fd);
-      if (d.byProject && d.byProject[val]) {
-        found = d.byProject[val];
+    const pp = localStorage.getItem('pronghorn_projects');
+    if (pp) {
+      const parsed = JSON.parse(pp);
+      const match = parsed.find(p => val.includes(p.name) || p.name === val);
+      if (match) {
+        // Merge with baked data for phases/equipment, override employees from costing tool
+        const baked = BAKED_PROJECTS.find(p => p.key === val || p.name === val) || {};
+        found = Object.assign({}, baked, {
+          employees: match.employees || baked.employees || [],
+          name: match.name,
+          num: match.num || baked.num || ''
+        });
       }
     }
   } catch(e) {}
 
-  // Fall back to baked data
+  // 2. Try pronghorn_field_data (legacy)
+  if (!found) {
+    try {
+      const fd = localStorage.getItem('pronghorn_field_data');
+      if (fd) {
+        const d = JSON.parse(fd);
+        if (d.byProject && d.byProject[val]) found = d.byProject[val];
+      }
+    } catch(e) {}
+  }
+
+  // 3. Fall back to baked data
   if (!found) {
     found = BAKED_PROJECTS.find(p => p.key === val || p.name === val);
   }
+
   curProject = found || null;
 }
 
@@ -427,9 +455,11 @@ function phases() {
   return [...new Set(all)];
 }
 function employees() {
-  if (curProject && curProject.employees) return curProject.employees;
-  const all = BAKED_PROJECTS.flatMap(p => p.employees);
-  return [...new Set(all)];
+  // Handle both string[] (baked) and {name,classification}[] (from localStorage sync)
+  const raw = (curProject && curProject.employees) 
+    ? curProject.employees 
+    : BAKED_PROJECTS.flatMap(p => p.employees);
+  return [...new Set(raw.map(e => typeof e === 'string' ? e : e.name))];
 }
 function laborClasses() {
   if (curProject && curProject.laborClasses) return curProject.laborClasses;
@@ -567,7 +597,11 @@ function addVis() {
         <div class="fg"><label>Name</label><input type="text" id="vs-nm-${id}" placeholder="Full name"></div>
         <div class="fg"><label>Company / Role</label><input type="text" id="vs-co-${id}" placeholder="City Inspector"></div>
       </div>
-      <div class="fg"><label>Notes</label><input type="text" id="vs-nt-${id}" placeholder="Purpose, decisions made"></div>
+      <div class="two" style="margin-top:6px">
+        <div class="fg" style="margin:0"><label>Arrival Time</label><input type="time" id="vs-arr-${id}"></div>
+        <div class="fg" style="margin:0"><label>Departure Time</label><input type="time" id="vs-dep-${id}"></div>
+      </div>
+      <div class="fg" style="margin-top:8px"><label>Notes</label><input type="text" id="vs-nt-${id}" placeholder="Purpose, decisions made"></div>
     </div>`);
 }
 
@@ -655,7 +689,9 @@ function buildPayload() {
   const visitors = [];
   for (let i = 0; i < visN; i++) {
     if (!g('vis-'+i)) continue;
-    visitors.push({ name:val('vs-nm-'+i), company:val('vs-co-'+i), notes:val('vs-nt-'+i) });
+    visitors.push({ name:val('vs-nm-'+i), company:val('vs-co-'+i),
+      arrivalTime:val('vs-arr-'+i)||'', departureTime:val('vs-dep-'+i)||'',
+      notes:val('vs-nt-'+i) });
   }
 
   return { _import:true, _version:2, date, project, reporter, weather,
